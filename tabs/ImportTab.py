@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QKeyEvent, QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -138,8 +138,8 @@ class SearchOverlay(QWidget):
         self.current_index = -1
 
         # Setup UI
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground)
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -166,6 +166,7 @@ class SearchOverlay(QWidget):
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Поиск по колонкам...")
+        self.search_input.setFocusPolicy(Qt.StrongFocus)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         self.search_input.returnPressed.connect(self.find_next)
         layout.addWidget(self.search_input)
@@ -205,7 +206,12 @@ class SearchOverlay(QWidget):
         """Show search overlay and focus input."""
         self._reposition()
         self.show()
-        self.search_input.setFocus()
+        self.raise_()
+        QTimer.singleShot(0, self._set_focus)
+
+    def _set_focus(self):
+        """Set focus to search input with delay."""
+        self.search_input.setFocus(Qt.OtherFocusReason)
         self.search_input.selectAll()
 
     def hide_search(self):
@@ -403,6 +409,9 @@ class ImportTab(QWidget):
         # NEW: Create search overlay for Ctrl+F functionality
         self.search_overlay = SearchOverlay(self.tbl)
 
+        # Install event filter on table to catch Ctrl+F
+        self.tbl.installEventFilter(self)
+
         ctrl = QHBoxLayout()
         ctrl.addWidget(QLabel("Batch size:"))
         self.spin_batch = QSpinBox()
@@ -451,7 +460,7 @@ class ImportTab(QWidget):
                 key_event.key() == Qt.Key_F
                 and key_event.modifiers() == Qt.ControlModifier
             ):
-                # Show search overlay
+                # Show search overlay and focus input field
                 if self.search_overlay:
                     self.search_overlay.show_search()
                 return True
@@ -715,9 +724,29 @@ class ImportTab(QWidget):
                 # Преобразуем все значения в строку перед созданием словаря
                 str_row = {col: str(val) for col, val in zip(cols, r)}
                 rows.append(str_row)
-            preview_text = json.dumps(rows, ensure_ascii=False, indent=2)[:4000]
+            preview_text = json.dumps(rows, ensure_ascii=False, indent=2)
             logger.debug(f"Предпросмотр: {len(rows)} строк")
-            QMessageBox.information(self, "Предпросмотр", preview_text)
+
+            # Create scrollable preview dialog
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Предпросмотр данных")
+            dlg.resize(900, 600)
+
+            layout = QVBoxLayout(dlg)
+
+            # Add text edit with vertical scrolling
+            text_edit = QTextEdit()
+            text_edit.setPlainText(preview_text)
+            text_edit.setReadOnly(True)
+            text_edit.setLineWrapMode(QTextEdit.NoWrap)
+            layout.addWidget(text_edit)
+
+            # Add close button
+            btn_close = QPushButton("Закрыть")
+            btn_close.clicked.connect(dlg.accept)
+            layout.addWidget(btn_close)
+
+            dlg.exec()
         except Exception as e:
             logger.error(f"Ошибка предпросмотра: {e}", exc_info=True)
             QMessageBox.critical(self, "Ошибка", str(e))
